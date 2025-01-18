@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#code from dalso0418(svrforum)
+#modified by xjn(svrforum)
+
 # Proxmox 환경 확인 함수
 check_proxmox_environment() {
     if [ -f /etc/pve/pve.version ] || command -v pvesh &> /dev/null; then
@@ -205,5 +208,3 @@ if [[ $START_VM == "y" || $START_VM == "Y" ]]; then
 else
     echo "VM이 생성되었지만 시작되지 않았습니다. 나중에 수동으로 시작할 수 있습니다."
 fi
-
-echo "스크립트 실행이 완료되었습니다."
