@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Proxmox 환경 확인 함수
+check_proxmox_environment() {
+    if [ -f /etc/pve/pve.version ] || command -v pvesh &> /dev/null; then
+        echo "Proxmox Environment detected"
+    else
+        echo "This environment is not Proxmox"
+        exit 1
+    fi
+}
+
 # 필요한 패키지 확인 및 설치
 install_package() {
     local package=$1
@@ -13,17 +23,35 @@ install_package() {
     fi
 }
 
-# jq 및 unzip 패키지 설치 확인
-install_package "jq"
-install_package "unzip"
-
 # 이미지 파일 다운로드 및 압축 해제 함수
 download_and_extract_image() {
     local url=$1
     local zip_path=$2
     local img_path=$3
     wget $url -O $zip_path
-    unzip -o $zip_path -d $(dirname $img_path)
+    if [[ $zip_path == *.zip ]]; then
+        unzip -o $zip_path -d $(dirname $img_path)
+        mv $(dirname $img_path)/$(basename $zip_path .zip).img $img_path
+    elif [[ $zip_path == *.gz ]]; then
+        gunzip -f $zip_path
+    fi
+}
+
+# 이미지 파일 확인 및 다운로드 함수
+check_and_download_image() {
+    local img_name=$1
+    local img_url=$2
+    local img_path=$3
+    
+    if [ -f "$img_path" ]; then
+        read -p "$img_name 이미지가 이미 존재합니다. 재다운로드하시겠습니까? (y/n): " choice
+        if [ "$choice" = "y" ]; then
+            download_and_extract_image $img_url $img_path.gz $img_path
+        fi
+    else
+        echo "$img_name 이미지가 존재하지 않습니다. 다운로드를 시작합니다..."
+        download_and_extract_image $img_url $img_path.gz $img_path
+    fi
 }
 
 # 디스크 추가 함수
@@ -59,6 +87,18 @@ validate_disk_count() {
     fi
     return 0
 }
+
+# Proxmox 환경 확인
+check_proxmox_environment
+
+# jq 및 unzip 패키지 설치 확인
+install_package "jq"
+install_package "unzip"
+
+# 이미지 파일 확인 및 다운로드
+check_and_download_image "m-shell" "https://github.com/PeterSuh-Q3/tinycore-redpill/releases/download/v1.1.0.1/tinycore-redpill.v1.1.0.1.m-shell.img.gz" "/var/lib/vz/template/iso/m-shell.img"
+check_and_download_image "RR" "https://github.com/RROrg/rr/releases/download/25.1.0/rr-25.1.0.img.zip" "/var/lib/vz/template/iso/rr.img"
+check_and_download_image "xTCRP" "https://github.com/PeterSuh-Q3/tinycore-redpill/releases/download/v1.1.0.1/tinycore-redpill.v1.1.0.1.xtcrp.img.gz" "/var/lib/vz/template/iso/xtcrp.img"
 
 # 사용자 입력 받기
 read -p "VM 번호를 입력하세요 (숫자): " VMID
@@ -107,26 +147,17 @@ read -p "사용할 네트워크 브릿지 이름을 입력하세요 (ex. vmbr0) 
 # 이미지 파일 선택
 echo "사용할 이미지 파일을 선택하세요:"
 echo "1. m-shell (m-shell.img)"
-echo "2. RR (rr.img.zip)"
+echo "2. RR (rr.img)"
 echo "3. xTCRP (xtcrp.img)"
 read -p "선택 (1 - 3): " IMAGE_CHOICE
 
 # 이미지 파일 경로 설정
 if [ "$IMAGE_CHOICE" -eq 1 ]; then
-    IMG_URL="https://github.com/PeterSuh-Q3/tinycore-redpill/releases/download/v1.1.0.1/tinycore-redpill.v1.1.0.1.m-shell.img.gz"
     IMG_PATH="/var/lib/vz/template/iso/m-shell.img"
-    wget $IMG_URL -O /var/lib/vz/template/iso/m-shell.img.gz
-    gunzip -f /var/lib/vz/template/iso/m-shell.img.gz
 elif [ "$IMAGE_CHOICE" -eq 2 ]; then
-    IMG_URL="https://github.com/RROrg/rr/releases/download/25.1.0/rr-25.1.0.img.zip"
-    IMG_ZIP_PATH="/var/lib/vz/template/iso/rr-25.1.0.img.zip"
     IMG_PATH="/var/lib/vz/template/iso/rr.img"
-    download_and_extract_image $IMG_URL $IMG_ZIP_PATH $IMG_PATH
 elif [ "$IMAGE_CHOICE" -eq 3 ]; then
-    IMG_URL="https://github.com/PeterSuh-Q3/tinycore-redpill/releases/download/v1.1.0.1/tinycore-redpill.v1.1.0.1.xtcrp.img.gz"
     IMG_PATH="/var/lib/vz/template/iso/xtcrp.img"
-    wget $IMG_URL -O /var/lib/vz/template/iso/xtcrp.img.gz
-    gunzip -f /var/lib/vz/template/iso/xtcrp.img.gz
 else
     echo "잘못된 선택입니다. 1 부터 3까지의 숫자를 입력하세요."
     exit 1
@@ -148,12 +179,9 @@ qm set $VMID --boot order=net0
 # 커스텀 args 추가
 qm set $VMID --args "-drive 'if=none,id=synoboot,format=raw,file=$IMG_PATH' -device 'qemu-xhci,addr=0x18' -device 'usb-storage,drive=synoboot,bootindex=5'"
 
-# VM 시작
-qm start $VMID
-
 # 요약 정보 출력
 echo "-----------------------------------------------------"
-echo "VM 생성 및 시작이 완료되었습니다!"
+echo "VM 생성이 완료되었습니다!"
 echo "VM ID: $VMID"
 echo "VM 이름: $VMNAME"
 echo "CPU 코어 수: $CORES"
@@ -168,4 +196,14 @@ do
     echo "디스크 $((i+1)) - 타입: ${DISK_INFO[0]}, 스토리지: ${DISK_INFO[1]}, 크기: ${DISK_INFO[2]} GB"
 done
 
-echo "VM 생성 및 시작이 완료되었습니다!"
+# VM 실행 여부 확인
+read -p "VM을 지금 실행하시겠습니까? (y/n): " START_VM
+if [[ $START_VM == "y" || $START_VM == "Y" ]]; then
+    echo "VM을 시작합니다..."
+    qm start $VMID
+    echo "VM이 성공적으로 시작되었습니다!"
+else
+    echo "VM이 생성되었지만 시작되지 않았습니다. 나중에 수동으로 시작할 수 있습니다."
+fi
+
+echo "스크립트 실행이 완료되었습니다."
